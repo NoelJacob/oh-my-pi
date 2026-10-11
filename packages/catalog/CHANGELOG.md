@@ -95,6 +95,11 @@
 - Fixed OpenRouter Decisions endpoint derivation when the chat base URL has a trailing slash.
 - Fixed GPT-6.1 Sol Ultrafast usage pricing to apply OpenAI's published premium rates for the OpenAI API and Codex included usage.
 - Fixed GPT-6 Sol, GPT-6.1 Sol, and GPT-6 Luna so changing reasoning effort preserves prompt caching.
+- Corrected the OpenCode free-tier body-gate contract: the gateway requires both `bash` and `read` in `tools[]`, not any two of five core names — rosters like the advisor's (`read`/`grep`/`glob` without `bash`) still 403.
+- Fixed GLM-5.3-FlashX on Zhipu Coding Plan missing bundled context, image, and thinking-level metadata ([#15314](https://github.com/can1357/oh-my-pi/issues/15314)).
+- Fixed `openrouterDecisionsBaseUrl` deriving a malformed OpenRouter Decisions root when the chat `baseUrl` has a trailing slash (such as `.../api/v1/`); it now strips trailing slashes before mapping `/v1` to `/alpha`, and is exported so provider-wide `baseUrl` overrides can reuse it ([#14848](https://github.com/can1357/oh-my-pi/pull/14848) by [@jerryfane](https://github.com/jerryfane))
+- Fixed GPT-6.1 Sol Ultrafast usage being priced at the Standard rate; it now applies OpenAI's published premium: 6x on the OpenAI API and 8x included usage on Codex ([#15000](https://github.com/can1357/oh-my-pi/pull/15000) by [@eggpeat](https://github.com/eggpeat)).
+- Fixed GPT-6 Sol, GPT-6.1 Sol and GPT-6 Luna losing the prompt cache on every reasoning-effort change: like GPT-6 Astra they now carry the change as a `configuration_update` item (OpenRouter's GPT-6 rows keep request-level effort changes)
 
 ## [18.8.8] - 2026-10-10
 
@@ -431,6 +436,18 @@
 
 ### Added
 
+- Added `buildDiscoveredModel` helper for custom providers
+- Added support for glob-based patterns in identity overrides
+- Added `wire/opencode` helpers (`OPENCODE_USER_AGENT`, `toOpenCodeSessionToken`, `OPENCODE_SESSION_TOKEN_PATTERN`, `OPENCODE_GATE_TOOL_NAMES`, `withOpenCodeGateTools`) for the OpenCode gateway client-identity and free-tier body-gate contracts ([#12556](https://github.com/can1357/oh-my-pi/pull/12556) by [@palprateek](https://github.com/palprateek))
+
+### Changed
+
+- Centralized llama.cpp Qwen routing and thinking policy in KDL, with reviewed Bonsai lineage aliases and shared backend policy for custom provider names.
+- OpenCode Go/Zen live model discovery and usage polls now attribute with the canonical OpenCode client identity (`opencode/*` User-Agent + canonical `ses_` session token) instead of omp's UA and raw install id.
+
+### Fixed
+
+- Fixed OpenCode free-tier 403 (`FreeTierError`) on tool-less auxiliary calls: all OpenCode traffic now carries the client identity the gateway's gate requires.
 - Expanded OpenRouter provider support with embedding, reranking, video generation, text-to-speech, and speech-to-text capabilities, including five new speech-to-text models.
 - Added speech-to-text support to the OpenAI provider.
 
