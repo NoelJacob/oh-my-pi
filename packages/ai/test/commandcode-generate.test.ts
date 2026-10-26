@@ -3,12 +3,12 @@ import { COMMAND_CODE_CLI_USER_AGENT, streamCommandCodeGenerate } from "@oh-my-p
 import type { Context, Model } from "@oh-my-pi/pi-ai/types";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 
-function model(): Model<"commandcode-generate"> {
+function model(provider = "commandcode-nonprovider"): Model<"commandcode-generate"> {
 	return buildModel({
 		id: "reflection/beam:free",
 		name: "Beam",
 		api: "commandcode-generate",
-		provider: "commandcode-nonprovider",
+		provider,
 		baseUrl: "https://api.commandcode.ai",
 		reasoning: true,
 		input: ["text"],
@@ -106,5 +106,182 @@ describe("streamCommandCodeGenerate", () => {
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage).toContain("403");
 		expect(result.errorMessage).toContain("MODEL_NOT_IN_PLAN");
+	});
+});
+
+/** Capture the JSON body the transport posts for `ctx`. */
+async function captureParams(ctx: Context): Promise<Record<string, unknown>> {
+	let body: Record<string, unknown> | undefined;
+	const fetchImpl = async (_input: string | URL | Request, init?: RequestInit) => {
+		body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+		return jsonLines([{ type: "start" }, { type: "text-start", id: "t" }, { type: "text-delta", text: "ok" }]);
+	};
+	await streamCommandCodeGenerate(model(), ctx, { apiKey: "user_test", fetch: fetchImpl }).result();
+	if (!body) throw new Error("Expected a captured request body");
+	return (body.params ?? {}) as Record<string, unknown>;
+}
+
+interface WirePart {
+	type: string;
+	text?: string;
+	toolCallId?: string;
+}
+
+describe("Command Code generate wire contracts", () => {
+	// Contract: the harness forwards tool call ids to OpenAI-family upstreams,
+	// which reject anything longer than 64 characters
+	// (`\`input[2].call_id\` The length of the value must be \`<= 64\``).
+	const longCallId = `call_${"x".repeat(80)}`;
+	const toolHistory: Context = {
+		messages: [
+			{ role: "user", content: "read it", timestamp: 1 },
+			{
+				role: "assistant",
+				content: [{ type: "toolCall", id: longCallId, name: "read_file", arguments: { path: "/etc/hostname" } }],
+				api: "commandcode-generate",
+				provider: "commandcode-nonprovider",
+				model: "reflection/beam:free",
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp: 2,
+			},
+			{
+				role: "toolResult",
+				toolCallId: longCallId,
+				toolName: "read_file",
+				content: [{ type: "text", text: "host" }],
+				isError: false,
+				timestamp: 3,
+			},
+		],
+	};
+
+	it("caps replay tool-call ids at 64 characters and keeps call and result paired", async () => {
+		const params = await captureParams(toolHistory);
+		const messages = params.messages as Array<{ role: string; content: WirePart[] }>;
+		const callPart = messages[1]?.content.find(part => part.type === "tool-call");
+		const resultPart = messages[2]?.content.find(part => part.type === "tool-result");
+		if (!callPart?.toolCallId || !resultPart?.toolCallId) throw new Error("Expected tool parts on the wire");
+		expect(callPart.toolCallId.length).toBeLessThanOrEqual(64);
+		expect(callPart.toolCallId).toBe(resultPart.toolCallId);
+	});
+
+	it("replays only the call half of a composite Responses id", async () => {
+		// Responses-family ids are `call_id|item_id`; the upstream pairs by the
+		// call half, so the item half must not reach this wire (it also blows
+		// the 64-character cap on its own).
+		const compositeId = "call_ABC123def456|fc_XYZ789ghi012";
+		const params = await captureParams({
+			messages: [
+				{ role: "user", content: "read it", timestamp: 1 },
+				{
+					role: "assistant",
+					content: [{ type: "toolCall", id: compositeId, name: "read_file", arguments: {} }],
+					api: "commandcode-generate",
+					provider: "commandcode-nonprovider",
+					model: "reflection/beam:free",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: 2,
+				},
+				{
+					role: "toolResult",
+					toolCallId: compositeId,
+					toolName: "read_file",
+					content: [{ type: "text", text: "host" }],
+					isError: false,
+					timestamp: 3,
+				},
+			],
+		});
+		const messages = params.messages as Array<{ role: string; content: WirePart[] }>;
+		const callPart = messages[1]?.content.find(part => part.type === "tool-call");
+		const resultPart = messages[2]?.content.find(part => part.type === "tool-result");
+		expect(callPart?.toolCallId).toBe("call_ABC123def456");
+		expect(resultPart?.toolCallId).toBe("call_ABC123def456");
+	});
+
+	// Contract: the harness drops an empty reasoning part and then rejects the
+	// next request with `Missing required parameter: 'messages[i].reasoning_content'`
+	// on models that require reasoning on every earlier assistant turn.
+	const reasoninglessHistory: Context = {
+		messages: [
+			{ role: "user", content: "hi", timestamp: 1 },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "hello" }],
+				api: "commandcode-generate",
+				provider: "commandcode",
+				model: "reflection/beam:free",
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "stop",
+				timestamp: 2,
+			},
+			{ role: "user", content: "say ok", timestamp: 3 },
+		],
+	};
+
+	it("replays placeholder reasoning for a reasoning-less assistant turn", async () => {
+		const params = await captureParams(reasoninglessHistory);
+		const messages = params.messages as Array<{ role: string; content: WirePart[] }>;
+		expect(messages[1]?.content).toEqual([
+			{ type: "reasoning", text: "." },
+			{ type: "text", text: "hello" },
+		]);
+	});
+
+	it("keeps captured reasoning instead of the placeholder", async () => {
+		const params = await captureParams({
+			messages: [
+				{ role: "user", content: "hi", timestamp: 1 },
+				{
+					role: "assistant",
+					content: [
+						{ type: "thinking", thinking: "real trace" },
+						{ type: "text", text: "hello" },
+					],
+					api: "commandcode-generate",
+					provider: "commandcode",
+					model: "reflection/beam:free",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "stop",
+					timestamp: 2,
+				},
+				{ role: "user", content: "say ok", timestamp: 3 },
+			],
+		});
+		const messages = params.messages as Array<{ role: string; content: WirePart[] }>;
+		expect(messages[1]?.content).toEqual([
+			{ type: "reasoning", text: "real trace" },
+			{ type: "text", text: "hello" },
+		]);
 	});
 });

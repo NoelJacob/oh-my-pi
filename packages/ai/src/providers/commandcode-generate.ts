@@ -32,6 +32,7 @@ import type {
 } from "../types";
 import { normalizeSystemPrompts } from "../utils";
 import { AssistantMessageEventStream } from "../utils/event-stream";
+import { sanitizeCodexCallId } from "./openai-codex/request-transformer";
 
 /** The wire protocol id served by this module. */
 export const COMMANDCODE_GENERATE_API = "commandcode-generate" as const;
@@ -64,12 +65,39 @@ function textOf(content: unknown): string {
 }
 
 /**
+ * Placeholder replayed as an assistant turn's reasoning when the upstream
+ * demands one for every earlier message but omp never captured any (the turn
+ * ran with reasoning off, or the reasoning was stripped before persistence).
+ * The harness drops an empty `reasoning` part and then rejects the request, so
+ * this matches the "." sentinel the chat-completions transport already uses.
+ */
+const SYNTHETIC_REASONING_PLACEHOLDER = ".";
+
+/**
  * Project omp's transcript onto the AI SDK model-message shape the CLI sends.
  *
  * Assistant reasoning replays as a `reasoning` content part and tool results as
  * `tool-result` parts; reasoning-capable upstreams reject a tool-call turn whose
  * assistant message omits the reasoning that produced it, so this mapping is
  * required for multi-step conversations, not optional fidelity.
+ *
+ * Two wire contracts beyond the shape itself (verified live against
+ * `/alpha/generate`, 2026-10-26):
+ *
+ * - **Tool call ids are capped at 64 characters.** The harness forwards them
+ *   to OpenAI-family upstreams, which answer
+ *   `` `input[2].call_id` The length of the value must be `<= 64` `` for a
+ *   longer id. {@link sanitizeCodexCallId} is deterministic, so the call and
+ *   its result keep pairing after the rewrite.
+ * - **A reasoning part must be non-empty.** The harness drops an empty
+ *   `reasoning` part and forwards the rest as the upstream's
+ *   `reasoning_content`, so an earlier assistant turn replayed without one
+ *   fails the next request with
+ *   `Missing required parameter: 'messages[i].reasoning_content'` on upstreams
+ *   that replay every turn's reasoning (Reflection Beam). Every reasoning-less
+ *   assistant turn therefore carries the "." sentinel the chat-completions
+ *   transport already uses; models that do not need reasoning accept it
+ *   (verified on Kimi K2.7 Code and Muse Spark 1.3).
  */
 function convertMessages(context: Context): unknown[] {
 	const messages: unknown[] = [];
@@ -81,8 +109,10 @@ function convertMessages(context: Context): unknown[] {
 			}
 			case "assistant": {
 				const content: unknown[] = [];
+				let hasReasoning = false;
 				for (const block of message.content ?? []) {
 					if (block.type === "thinking") {
+						hasReasoning = true;
 						content.push({ type: "reasoning", text: (block as ThinkingContent).thinking ?? "" });
 					} else if (block.type === "text") {
 						content.push({ type: "text", text: (block as TextContent).text ?? "" });
@@ -90,12 +120,19 @@ function convertMessages(context: Context): unknown[] {
 						const call = block as ToolCall;
 						content.push({
 							type: "tool-call",
-							toolCallId: call.id,
+							toolCallId: sanitizeCodexCallId(call.id),
 							toolName: call.name,
 							input: call.arguments ?? {},
 						});
 					}
 				}
+				// Reasoning-first and never empty: the harness forwards these parts
+				// as the upstream's `reasoning_content` and drops empty ones, so a
+				// turn with no captured reasoning must still carry a non-empty
+				// placeholder or the next request fails with
+				// `Missing required parameter: 'messages[i].reasoning_content'` on
+				// upstreams that replay every earlier assistant turn.
+				if (!hasReasoning) content.unshift({ type: "reasoning", text: SYNTHETIC_REASONING_PLACEHOLDER });
 				// An empty assistant turn is not representable on the wire.
 				if (content.length === 0) content.push({ type: "text", text: "" });
 				messages.push({ role: "assistant", content });
@@ -103,12 +140,13 @@ function convertMessages(context: Context): unknown[] {
 			}
 			case "toolResult": {
 				const result = message as ToolResultMessage;
+				const toolCallId = sanitizeCodexCallId(result.toolCallId);
 				messages.push({
 					role: "tool",
 					content: [
 						{
 							type: "tool-result",
-							toolCallId: result.toolCallId,
+							toolCallId,
 							toolName: result.toolName,
 							output: { type: "text", value: textOf(result.content) },
 						},
