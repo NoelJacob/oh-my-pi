@@ -19,6 +19,7 @@ export type KnownProvider =
 	| "cloudflare-ai-gateway"
 	| "cloudflare-workers-ai"
 	| "commandcode"
+	| "commandcode-nonprovider"
 	| "coralbricks"
 	| "coreweave"
 	| "cursor"

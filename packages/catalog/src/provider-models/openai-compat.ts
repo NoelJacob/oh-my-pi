@@ -7824,6 +7824,42 @@ export function commandCodeModelManagerOptions(config?: CommandCodeModelManagerC
 }
 
 // ---------------------------------------------------------------------------
+// Command Code Non-Provider (Go subscription)
+// ---------------------------------------------------------------------------
+
+const COMMAND_CODE_ORIGIN = "https://api.commandcode.ai";
+
+/**
+ * Builds the Command Code "Non-Provider" (Go subscription) model manager.
+ *
+ * A Go plan cannot reach `/provider`, so the Provider API's catalog is not a
+ * usable discovery source and no dynamic fetch runs. The roster of record is
+ * Command Code's own bundled rows: reusing them preserves reviewed pricing,
+ * effort ladders, modalities, and limits, and every model the Provider catalog
+ * gains appears here once the bundle is regenerated.
+ *
+ * Each row is rebased onto the CLI transport: `api` becomes
+ * `commandcode-generate` and `baseUrl` becomes the account origin that
+ * `/alpha/generate` is appended to. `baseUrl` is an origin override for tests
+ * and proxies.
+ */
+export function commandCodeNonProviderModelManagerOptions(
+	config?: CommandCodeModelManagerConfig,
+): ModelManagerOptions<"commandcode-generate"> {
+	const origin = (config?.baseUrl ?? COMMAND_CODE_ORIGIN).trim().replace(/\/+$/, "");
+	const staticModels = (getBundledModels("commandcode") as readonly Model<"commandcode-generate">[]).map(model => ({
+		...model,
+		api: "commandcode-generate" as const,
+		baseUrl: origin,
+	}));
+	return {
+		providerId: "commandcode-nonprovider",
+		cacheProviderId: "commandcode-nonprovider",
+		staticModels,
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Charm Hyper
 // ---------------------------------------------------------------------------
 

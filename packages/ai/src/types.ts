@@ -44,6 +44,7 @@ import type { FallbackParam, MessageCreateParamsStreaming, StopDetails } from ".
 import type { AzureOpenAIResponsesOptions } from "./providers/azure-openai-responses";
 import type { CursorOptions } from "./providers/cursor";
 import type { AppleFoundationModelsOptions } from "./providers/apple-foundation-models";
+import type { CommandCodeGenerateOptions } from "./providers/commandcode-generate";
 import type { DevinOptions } from "./providers/devin";
 import type { FactoryDroidOptions } from "./providers/factory-droid";
 import type { GitLabDuoWorkflowOptions } from "./providers/gitlab-duo-workflow";
@@ -89,6 +90,7 @@ export interface ApiOptionsMap {
 	"gitlab-duo-agent": GitLabDuoWorkflowOptions;
 	"devin-agent": DevinOptions;
 	"apple-foundation-models": AppleFoundationModelsOptions;
+	"commandcode-generate": CommandCodeGenerateOptions;
 }
 // Compile-time exhaustiveness check - this will fail if ApiOptionsMap doesn't have all KnownApi keys
 type _CheckExhaustive =

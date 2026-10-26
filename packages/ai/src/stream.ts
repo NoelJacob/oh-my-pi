@@ -25,6 +25,7 @@ import type { BedrockOptions } from "./providers/amazon-bedrock";
 import { reachesOfficialEndpoint } from "./providers/anthropic-state";
 import type { AnthropicOptions } from "./providers/anthropic";
 import type { AppleFoundationModelsOptions } from "./providers/apple-foundation-models";
+import type { CommandCodeGenerateOptions } from "./providers/commandcode-generate";
 import type { CursorOptions } from "./providers/cursor";
 import type { DevinOptions } from "./providers/devin";
 import { type FactoryDroidOptions, streamFactoryDroid } from "./providers/factory-droid";
@@ -44,6 +45,7 @@ import {
 	streamAppleFoundationModels,
 	streamAzureOpenAIResponses,
 	streamBedrock,
+	streamCommandCodeGenerate,
 	streamCursor,
 	streamDevin,
 	streamGoogle,
@@ -990,6 +992,13 @@ function streamDispatch<TApi extends Api>(
 				providerModel as Model<"apple-foundation-models">,
 				context,
 				providerOptions as AppleFoundationModelsOptions,
+			);
+
+		case "commandcode-generate":
+			return streamCommandCodeGenerate(
+				providerModel as Model<"commandcode-generate">,
+				context,
+				providerOptions as CommandCodeGenerateOptions,
 			);
 
 		default:
@@ -2349,6 +2358,10 @@ function mapOptionsForApi<TApi extends Api>(
 				...base,
 				toolChoice: options?.toolChoice,
 				reasoning: options?.disableReasoning || options?.forceReasoningOff ? undefined : options?.reasoning,
+			});
+		case "commandcode-generate":
+			return castApi<"commandcode-generate">({
+				...base,
 			});
 		case "devin-agent": {
 			const devinModel = model as Model<"devin-agent">;
