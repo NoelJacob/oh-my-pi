@@ -114,6 +114,11 @@
 - Browser `fill` in Chrome replaces the text of rich-text editors such as Slate (Discord) and Lexical instead of leaving the old text in place or breaking the editor, and an empty fill clears them ([#17417](https://github.com/can1357/oh-my-pi/pull/17417) by [@will-bogusz](https://github.com/will-bogusz))
 - Requests to the Anthropic API and Factory Droid's hosts now drop their oldest images when long text, tool arguments, or re-declared tool definitions would otherwise push the request past the host's size limit ([#17492](https://github.com/can1357/oh-my-pi/pull/17492) by [@will-bogusz](https://github.com/will-bogusz))
 - Factory Droid requests size images against what each route actually sends: Gemini models count their expanded tool schemas and no longer drop images for another model's reasoning, and only Claude models count withdrawn tool definitions ([#17492](https://github.com/can1357/oh-my-pi/pull/17492))
+- Fixed advisor notes lingering invisibly until the next prompt when they arrived after the agent's last step or while it was idle; they are now shown as advisor cards ([#10600](https://github.com/can1357/oh-my-pi/issues/10600), [#13775](https://github.com/can1357/oh-my-pi/pull/13775) by [@rthiago](https://github.com/rthiago)).
+
+### Changed
+
+- Advisor concerns raised while the agent is mid-turn now reach it at its next step as non-interrupting asides instead of after the turn completes; only blockers interrupt a running tool ([#10600](https://github.com/can1357/oh-my-pi/issues/10600), [#13775](https://github.com/can1357/oh-my-pi/pull/13775) by [@rthiago](https://github.com/rthiago)).
 
 ## [18.14.0] - 2026-10-29
 
