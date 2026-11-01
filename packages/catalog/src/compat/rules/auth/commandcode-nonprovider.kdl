@@ -1,0 +1,15 @@
+// Shares the Command Code account key with the Provider API entry; the two
+// surfaces differ by plan, not by credential. `GET /alpha/whoami` is the
+// identity route the command-code CLI validates against: it answers 401 only
+// for a bad key and bills nothing, so the optional probe matches
+// `validateCommandApiKey`.
+auth "commandcode-nonprovider" {
+	name "Command Code (Non-Provider)"
+	env "COMMAND_CODE_API_KEY" "COMMANDCODE_API_KEY"
+	login "api-key" {
+		auth-url "https://commandcode.ai/studio"
+		instructions "Create or copy a Command Code API key from Command Code Studio"
+		prompt "Paste your Command Code API key" placeholder="user_..."
+		validate "models-endpoint" label="Command Code" url="https://api.commandcode.ai/alpha/whoami" optional=#true trust-forbidden=#true
+	}
+}

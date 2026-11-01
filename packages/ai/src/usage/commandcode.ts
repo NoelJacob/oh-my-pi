@@ -97,6 +97,7 @@ const WINDOWS: readonly WindowSpec[] = [
 ];
 
 function buildWindowLimit(
+	providerId: string,
 	spec: WindowSpec,
 	raw: unknown,
 	accountId: string,
@@ -111,9 +112,9 @@ function buildWindowLimit(
 	// Absent fields are omitted, not set to `undefined`: the usage wire schema
 	// rejects an explicit `undefined` for an optional key.
 	return {
-		id: `${PROVIDER}:${spec.id}`,
+		id: `${providerId}:${spec.id}`,
 		label: spec.limitLabel,
-		scope: { provider: PROVIDER, accountId, ...(orgId ? { orgId } : {}), windowId: spec.id, shared: true },
+		scope: { provider: providerId, accountId, ...(orgId ? { orgId } : {}), windowId: spec.id, shared: true },
 		window: {
 			id: spec.id,
 			label: spec.windowLabel,
@@ -136,65 +137,81 @@ function buildWindowLimit(
  * carry no `windowLimits`, so they report only the credit balance. Credits
  * are queried per org, as the CLI does, so each limit records the org that
  * owns the pool alongside the user.
+ *
+ * The Provider API and the Go subscription differ by plan, not by account, so
+ * both provider ids read the same routes through this factory.
  */
-async function fetchCommandCodeUsage(params: UsageFetchParams, ctx: UsageFetchContext): Promise<UsageReport | null> {
-	if (params.provider !== PROVIDER) return null;
-	if (params.credential.type !== "api_key" || !params.credential.apiKey) return null;
-	const origin = resolveOrigin(params.baseUrl);
+function createCommandCodeUsageProvider(providerId: string): UsageProvider {
+	async function fetchUsage(params: UsageFetchParams, ctx: UsageFetchContext): Promise<UsageReport | null> {
+		if (params.provider !== providerId) return null;
+		if (params.credential.type !== "api_key" || !params.credential.apiKey) return null;
+		const origin = resolveOrigin(params.baseUrl);
 
-	const whoami = await getJson(`${origin}${WHOAMI_PATH}`, params.credential.apiKey, params.signal, ctx);
-	if (!whoami) return null;
-	const user = isRecord(whoami.user) ? whoami.user : undefined;
-	const org = isRecord(whoami.org) ? whoami.org : undefined;
-	const userId = nonEmptyString(user?.id);
-	if (!userId) return null;
-	const orgId = nonEmptyString(org?.id);
-	const orgLogin = nonEmptyString(org?.login);
+		const whoami = await getJson(`${origin}${WHOAMI_PATH}`, params.credential.apiKey, params.signal, ctx);
+		if (!whoami) return null;
+		const user = isRecord(whoami.user) ? whoami.user : undefined;
+		const org = isRecord(whoami.org) ? whoami.org : undefined;
+		const userId = nonEmptyString(user?.id);
+		if (!userId) return null;
+		const orgId = nonEmptyString(org?.id);
+		const orgLogin = nonEmptyString(org?.login);
 
-	const creditsUrl = `${origin}${CREDITS_PATH}${orgId ? `?orgId=${encodeURIComponent(orgId)}` : ""}`;
-	const creditsBody = await getJson(creditsUrl, params.credential.apiKey, params.signal, ctx);
-	if (!creditsBody) return null;
-	const credits = isRecord(creditsBody.credits) ? creditsBody.credits : undefined;
-	if (!credits) return null;
-	const monthly = finiteNumber(credits.monthlyCredits);
-	const purchased = finiteNumber(credits.purchasedCredits);
-	const free = finiteNumber(credits.freeCredits);
-	if (monthly === undefined && purchased === undefined && free === undefined) return null;
+		const creditsUrl = `${origin}${CREDITS_PATH}${orgId ? `?orgId=${encodeURIComponent(orgId)}` : ""}`;
+		const creditsBody = await getJson(creditsUrl, params.credential.apiKey, params.signal, ctx);
+		if (!creditsBody) return null;
+		const credits = isRecord(creditsBody.credits) ? creditsBody.credits : undefined;
+		if (!credits) return null;
+		const monthly = finiteNumber(credits.monthlyCredits);
+		const purchased = finiteNumber(credits.purchasedCredits);
+		const free = finiteNumber(credits.freeCredits);
+		if (monthly === undefined && purchased === undefined && free === undefined) return null;
 
-	const limits: UsageLimit[] = [];
-	const windowLimits = isRecord(creditsBody.windowLimits) ? creditsBody.windowLimits : undefined;
-	for (const spec of WINDOWS) {
-		const limit = buildWindowLimit(spec, windowLimits?.[spec.key], userId, orgId);
-		if (limit) limits.push(limit);
+		const limits: UsageLimit[] = [];
+		const windowLimits = isRecord(creditsBody.windowLimits) ? creditsBody.windowLimits : undefined;
+		for (const spec of WINDOWS) {
+			const limit = buildWindowLimit(providerId, spec, windowLimits?.[spec.key], userId, orgId);
+			if (limit) limits.push(limit);
+		}
+		limits.push({
+			id: `${providerId}:balance`,
+			label: "Credit balance",
+			scope: {
+				provider: providerId,
+				accountId: userId,
+				...(orgId ? { orgId } : {}),
+				windowId: "balance",
+				shared: true,
+			},
+			amount: { remaining: (monthly ?? 0) + (purchased ?? 0) + (free ?? 0), unit: "credits" },
+		});
+
+		return {
+			provider: providerId,
+			fetchedAt: Date.now(),
+			limits,
+			metadata: {
+				accountId: userId,
+				email: nonEmptyString(user?.email),
+				orgId,
+				orgName: orgLogin,
+				planType: nonEmptyString(credits.planId),
+			},
+			raw: { whoami, credits: creditsBody },
+		};
 	}
-	limits.push({
-		id: `${PROVIDER}:balance`,
-		label: "Credit balance",
-		scope: { provider: PROVIDER, accountId: userId, ...(orgId ? { orgId } : {}), windowId: "balance", shared: true },
-		amount: { remaining: (monthly ?? 0) + (purchased ?? 0) + (free ?? 0), unit: "credits" },
-	});
 
 	return {
-		provider: PROVIDER,
-		fetchedAt: Date.now(),
-		limits,
-		metadata: {
-			accountId: userId,
-			email: nonEmptyString(user?.email),
-			orgId,
-			orgName: orgLogin,
-			planType: nonEmptyString(credits.planId),
-		},
-		raw: { whoami, credits: creditsBody },
+		id: providerId,
+		fetchUsage,
+		supports: params => params.provider === providerId && params.credential.type === "api_key",
+		validatesCredentials: true,
 	};
 }
 
-export const commandCodeUsageProvider: UsageProvider = {
-	id: PROVIDER,
-	fetchUsage: fetchCommandCodeUsage,
-	supports: params => params.provider === PROVIDER && params.credential.type === "api_key",
-	validatesCredentials: true,
-};
+export const commandCodeUsageProvider = createCommandCodeUsageProvider(PROVIDER);
+
+/** Usage for the Go subscription surface; same account routes as the Provider API. */
+export const commandCodeNonProviderUsageProvider = createCommandCodeUsageProvider("commandcode-nonprovider");
 
 /** Ranks Command Code accounts by the 5-hour and weekly credit windows. */
 export const commandCodeRankingStrategy: CredentialRankingStrategy = {

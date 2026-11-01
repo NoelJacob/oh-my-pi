@@ -1,0 +1,14 @@
+// Command Code "Non-Provider": the Go subscription surface, reached only
+// through the command-code CLI's `POST /alpha/generate` route. The public
+// `/provider` API is a separate paid surface, so this entry shares the CLI's
+// account key but never routes through it.
+//
+// Model rows are not re-authored here: the factory in
+// `provider-models/openai-compat.ts` reuses Command Code's bundled roster and
+// rebases each row onto `commandcode-generate`. Keeping one roster means a
+// model added to the Provider catalog appears on the Go surface too.
+provider "commandcode-nonprovider" {
+	default-model "reflection/beam:free"
+	env "COMMAND_CODE_API_KEY" "COMMANDCODE_API_KEY"
+	allow-unauthenticated #true
+}

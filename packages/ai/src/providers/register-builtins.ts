@@ -306,6 +306,12 @@ export const streamAppleFoundationModels = createLazyProviderStream(
 	mod => mod.streamAppleFoundationModels,
 );
 
+/** Stream Command Code's Go-subscription `/alpha/generate` surface through the shared watchdog. */
+export const streamCommandCodeGenerate = createLazyProviderStream(
+	() => import("./commandcode-generate"),
+	mod => mod.streamCommandCodeGenerate,
+);
+
 /** Stream Ollama with OpenAI-compatible idle timeout precedence. */
 export const streamOllama = createLazyProviderStream(
 	() => import("./ollama"),
